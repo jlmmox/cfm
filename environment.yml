@@ -6,30 +6,28 @@ channels:
   - defaults
 dependencies:
   - python=3.9
-  - pip
-  - pytorch==2.1.0
-  - torchvision==0.16.0
-  - torchaudio==2.1.0
+  - pytorch=2.1
+  - torchvision=0.16
   - pytorch-cuda=12.1
-  - numpy=1.24.4
-  - pillow
-  - ffmpeg
-  - einops
-  - omegaconf
-  - webdataset
-  - lpips
-  - matplotlib
-  - scipy
+  - numpy=1.26
+  - pillow=11.1.0
+  - pyyaml=6.0.3
+  - tqdm=4.67
+  - scikit-image=0.23
+  - imageio=2.33
+  - tifffile=2023.4.12
+  - pip
   - pip:
-    - torchdiffeq
-    - diffusers==0.20.0
-    - transformers==4.31.0
-    - safetensors
-    - huggingface_hub
-    - wandb
-    - torchmetrics
-    - tokenizers==0.13.3
-    - accelerate
-    - protobuf
-    - opencv-python
-    - tqdm
+      - torchaudio==2.1.0
+      - pytorch-lightning==2.6.0
+      - omegaconf==2.3.0
+      - einops==0.8.1
+      - timm==1.0.20
+      - lpips==0.1.4
+      - safetensors==0.7.0
+      - torchmetrics==1.8.2
+      - opencv-python==4.10.0.84
+      - tensorboard==2.20.0
+      - torchdiffeq==0.2.5
+      - webdataset==0.2.100
+      - wandb==0.23.1
