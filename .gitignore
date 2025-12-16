@@ -1,0 +1,54 @@
+# Bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build / dist
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# Environments
+.env
+.venv/
+venv/
+env/
+.conda/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs / outputs
+logs/
+lightning_logs/
+wandb/
+*.log
+*.out
+*.err
+
+# Checkpoints / models / datasets
+checkpoints/
+cfm_test/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+!checkpoints/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/

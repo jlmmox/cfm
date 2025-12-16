@@ -1,0 +1,35 @@
+name: cfm1
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pytorch==2.1.0
+  - torchvision==0.16.0
+  - torchaudio==2.1.0
+  - pytorch-cuda=12.1
+  - numpy=1.24.4
+  - pillow
+  - ffmpeg
+  - einops
+  - omegaconf
+  - webdataset
+  - lpips
+  - matplotlib
+  - scipy
+  - pip:
+    - torchdiffeq
+    - diffusers==0.20.0
+    - transformers==4.31.0
+    - safetensors
+    - huggingface_hub
+    - wandb
+    - torchmetrics
+    - tokenizers==0.13.3
+    - accelerate
+    - protobuf
+    - opencv-python
+    - tqdm
