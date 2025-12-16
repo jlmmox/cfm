@@ -2,6 +2,43 @@
 
 耦合流匹配（Coupling Flow Matching, CFM）模块，已精简为专注于图像还原任务（Restore）。
 
+## 环境安装指引
+
+推荐使用 Conda 管理 PyTorch 与 CUDA（12.1），其他纯 Python 依赖使用 pip 安装。
+
+### 选项 A：Conda 一键创建（含 CUDA 12.1）
+
+1) 在项目目录创建并激活环境（cmd.exe）：
+
+```
+conda env create -f environment.yml
+conda activate cfm1
+```
+
+说明：`environment.yml` 将通过 Conda 安装 `pytorch 2.1.0`、`torchvision 0.16.0` 与 `pytorch-cuda 12.1`，其余依赖由 pip 段补齐（如 `pytorch-lightning 2.6.0`、`torchmetrics`、`lpips`、`webdataset` 等）。
+
+### 选项 B：Pip 安装（需先安装 GPU 版 PyTorch）
+
+1) 按 PyTorch 官方指引安装与显卡驱动匹配的 GPU 版 PyTorch（CUDA 12.1）。示例（仅参考，请以官网为准）：
+
+```
+pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0
+```
+
+2) 安装项目其余依赖：
+
+```
+pip install -r requirements.txt
+```
+
+验证 CUDA：
+
+```
+python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
+```
+
+若输出如 `2.1.0 True 12.1`，说明 GPU 与 CUDA 12.1 工作正常。
+
 ## 快速开始
 
 ### 推理（图像还原）
