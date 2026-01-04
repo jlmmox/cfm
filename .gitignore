@@ -1,0 +1,27 @@
+# Python / Lightning artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.pth
+
+# Virtual envs
+.venv/
+venv/
+.env
+
+# Logs & checkpoints
+logs/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/

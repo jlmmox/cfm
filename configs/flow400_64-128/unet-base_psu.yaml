@@ -1,0 +1,127 @@
+model:
+  # python train.py --config configs/flow400_64-128/unet-base_psu.yaml --name deblurbase
+  target: fmboost.trainer.TrainerFMBoost
+  params:
+    # the low-resolution image size from which we want to up-sample
+    low_res_size: 256
+    # the high-resolution image size to which we want to up-sample (just
+    # a dummy variable, never used except for printing; must match the
+    # size of the dataset)
+    high_res_size: 256
+    # ------------------------ context & conditioning
+    # this is the up-sampling mode, either for the latent code if we have a
+    # first stage set, or for the low-resolution image
+    upsampling_mode: identity
+    # up-sampling mode for the concatenated context
+    upsampling_mode_context: identity
+    # up-sampling mode for the cross-attention context
+    upsampling_mode_ca_context: identity
+    # whether we want to start from a gaussian normal with the low-resolution
+    # image as conditioning information (FM) or just the low-resolution image (IC-FM)
+    start_from_noise: False
+    # we can also first noise the image with the forward process of the
+    # diffusion process and do up-sampling from this perturbed image.
+    # If set to -1, we simply take the original image.
+    noising_step: 300
+    # if true, we concatenate the low-resolution image with the noise
+    concat_context: True
+    # if true, we provide input to cross-attention
+    ca_context: False
+    # ------------------------ Flow matching model
+    fm_cfg:
+      target: fmboost.flow.FlowModel
+      params:
+        schedule: linear
+        net_cfg:
+          target: fmboost.models.unet.model.EfficientUNet
+          params:
+            in_channels: 8    # 4 for the low-res image, 4 for the noise
+            model_channels: 128
+            out_channels: 4
+            num_res_blocks: 3
+            channel_mult: [1, 2, 4, 8]
+            # This isn't the resolution but the down-sampling factor.
+            # For each channel multiplier we down-sample the image
+            # by a factor of 2. Hence, the down-sampling factor increases
+            # by a factor of 2 for each channel multiplier. For an image
+            # with size 64x64 and four channel multipliers, the down-sampling
+            # factors are 1, 2, 4, 8. The attention resolutions are then
+            # 64, 32, 16, 8.
+            attention_resolutions: [8, 16]
+            dropout: 0.0
+            conv_resample: True
+            dim_head: 64
+            num_heads: 4
+            use_linear_attn: False
+            use_scale_shift_norm: True
+            pool_factor: -1
+    # ------------------------ first stage (KL-Autoencoder from LDM)
+    scale_factor: 0.18215
+    first_stage_cfg:
+      target: fmboost.kl_autoencoder.AutoencoderKL
+      params:
+        ckpt_path: checkpoints/sd_ae.ckpt
+    # ------------------------ training parameters
+    lr: 3e-5
+    weight_decay: 0.0
+    # lr_scheduler_cfg: ...         # set LR scheduler if wanted
+    ema_rate: 0.999
+    ema_update_every: 1             # EMA update frequency
+    ema_update_after_step: 1000     # warmup steps without EMA
+    use_ema_for_sampling: true      # whether to use EMA model for sampling
+    # tracking metrics
+    metric_tracker_cfg:
+      target: fmboost.metrics.ImageMetricTracker
+      params:
+        num_crops: 4
+        crop_size: 256
+    # lr scheduler
+    lr_scheduler_cfg:
+      target: fmboost.lr_schedulers.get_cosine_schedule_with_warmup
+      params:
+        num_warmup_steps: 1000
+        num_training_steps: 100000
+    log_grad_norm: True
+    # compute train SSIM/PSNR every N steps (0 = every step)
+    train_metric_interval: 500
+
+
+data:
+  name: PairedFolder256
+  target: fmboost.dataloader.PairedFolderDataModule
+  params:
+    root: ~/moxt/DiffUIR/Datasets/Restoration/Deblur
+    degraded_dir: input
+    clean_dir: target
+    batch_size: 4
+    val_batch_size: 4
+    test_batch_size: 4
+    image_size: 256
+    num_workers: 4
+    random_flip: true
+
+
+
+train:                                         # 训练控制项
+  checkpoint_callback_params:
+    every_n_train_steps: 10000                  # 每隔多少步保存一次
+    save_top_k: 2                              # 保存n个 checkpoint,选择保存多少个checkpoints，全部为-1
+    monitor: 'step'                             # 监控step数（保留最新的）
+    mode: 'max'                                 # 保留step最大（最新）的
+    verbose: True                               # 打印保存日志
+    save_last: True                             # 额外保存 last.ckpt
+    auto_insert_metric_name: False              # 不在文件名插入指标
+  trainer_params:
+    max_epochs: -1                            # 训练轮数（-1 表示不限步）
+    max_steps: 100000                         # 训练总步数（-1 表示不限轮）
+    num_sanity_val_steps: 0                     # 启动前验证步数
+    accumulate_grad_batches: 1                  # 梯度累计步数
+    log_every_n_steps: 500                      # 日志打印步频
+    limit_val_batches: 1                    # 验证集比例（1.0 全量，0 关闭）
+    val_check_interval: 500                     # 验证频率（步），需 ≤ 训练步数
+    precision: bf16-mixed                       # 混合精度设置
+    gradient_clip_val: 1.0                      # 梯度裁剪
+  callbacks:
+    - target: pytorch_lightning.callbacks.LearningRateMonitor
+      params:
+        logging_interval: 'step'
