@@ -1,127 +1,217 @@
 model:
   # python train.py --config configs/flow400_64-128/unet-base_psu.yaml --name deblurbase
-  target: fmboost.trainer.TrainerFMBoost
+  target: fmboost.trainer.TrainerFMBoost  # 训练器类，无需修改
   params:
-    # the low-resolution image size from which we want to up-sample
-    low_res_size: 256
-    # the high-resolution image size to which we want to up-sample (just
-    # a dummy variable, never used except for printing; must match the
-    # size of the dataset)
-    high_res_size: 256
-    # ------------------------ context & conditioning
-    # this is the up-sampling mode, either for the latent code if we have a
-    # first stage set, or for the low-resolution image
-    upsampling_mode: identity
-    # up-sampling mode for the concatenated context
-    upsampling_mode_context: identity
-    # up-sampling mode for the cross-attention context
-    upsampling_mode_ca_context: identity
-    # whether we want to start from a gaussian normal with the low-resolution
-    # image as conditioning information (FM) or just the low-resolution image (IC-FM)
-    start_from_noise: False
-    # we can also first noise the image with the forward process of the
-    # diffusion process and do up-sampling from this perturbed image.
-    # If set to -1, we simply take the original image.
-    noising_step: 300
-    # if true, we concatenate the low-resolution image with the noise
-    concat_context: True
-    # if true, we provide input to cross-attention
-    ca_context: False
-    # ------------------------ Flow matching model
+    # ======================== 图像尺寸配置 ========================
+    low_res_size: 256                      # 输入退化图像尺寸（修复任务中输入输出同尺寸）
+                                           # 调整建议：256(轻量去模糊) / 512(标准去噪) / 1024(高分辨率修复)
+                                           # 必须是 8 的倍数（VAE 8× 下采样）；尺寸越大显存需求越高
+    high_res_size: 256                     # 输出修复图像尺寸（必须与 low_res_size 相同）
+                                           # 调整建议：保持与 low_res_size 一致；仅用于日志显示
+    
+    # ======================== 上采样与条件注入配置 ========================
+    upsampling_mode: identity              # 主上采样模式（修复任务固定用 identity，输入输出同尺寸）
+                                           # 调整建议：修复任务必须用 identity，不需修改
+    upsampling_mode_context: identity      # concat 条件的上采样模式（修复任务固定 identity）
+                                           # 调整建议：保持与 upsampling_mode 相同，不需修改
+    upsampling_mode_ca_context: identity   # cross-attention 条件的上采样模式（修复任务不使用）
+                                           # 调整建议：修复任务中 ca_context=False，此项无效
+    
+    # ======================== 流场起点配置 ========================
+    start_from_noise: False                # 修复任务固定为 False（从退化图开始流动到干净图）
+                                           # 调整建议：修复任务必须用 False，否则无法利用退化图信息
+    noising_step: 300                      # 在退化图 latent 上额外加噪的步数（增加流场长度）
+                                           # 调整建议：去模糊任务 250-400（需要大幅度重建）
+                                           #          去噪任务 100-200（保留更多原图结构）
+                                           #          -1（不加噪，仅适合轻微退化）
+    
+    # ======================== 条件注入方式配置 ========================
+    concat_context: True                   # 将退化图 latent 通过 channel concat 注入（修复任务核心机制）
+                                           # 调整建议：修复任务必须为 True，提供退化图作为强先验
+                                           #          False 会让模型失去退化信息，无法进行修复
+    ca_context: False                      # 是否额外使用 cross-attention 注入（修复任务不需要）
+                                           # 调整建议：修复任务保持 False；concat 已足够，开启会增加计算量但无明显增益
+    
+    # ======================== Flow Matching 模型配置 ========================
     fm_cfg:
-      target: fmboost.flow.FlowModel
+      target: fmboost.flow.FlowModel        # Flow Matching 模型类，无需修改
       params:
-        schedule: linear
+        schedule: linear                    # 时间调度策略（修复任务用 linear 即可）
+                                           # 调整建议：修复任务保持 linear；gvp 对修复任务无明显优势且训练慢
         net_cfg:
-          target: fmboost.models.unet.model.EfficientUNet
+          target: fmboost.models.unet.model.EfficientUNet  # UNet 骨干网络，无需修改
           params:
-            in_channels: 8    # 4 for the low-res image, 4 for the noise
-            model_channels: 128
-            out_channels: 4
-            num_res_blocks: 3
-            channel_mult: [1, 2, 4, 8]
-            # This isn't the resolution but the down-sampling factor.
-            # For each channel multiplier we down-sample the image
-            # by a factor of 2. Hence, the down-sampling factor increases
-            # by a factor of 2 for each channel multiplier. For an image
-            # with size 64x64 and four channel multipliers, the down-sampling
-            # factors are 1, 2, 4, 8. The attention resolutions are then
-            # 64, 32, 16, 8.
-            attention_resolutions: [8, 16]
-            dropout: 0.0
-            conv_resample: True
-            dim_head: 64
-            num_heads: 4
-            use_linear_attn: False
-            use_scale_shift_norm: True
-            pool_factor: -1
-    # ------------------------ first stage (KL-Autoencoder from LDM)
-    scale_factor: 0.18215
+            in_channels: 8                  # 输入通道数：4(流场状态) + 4(退化图latent) = 8
+                                           # 调整建议：修复任务固定为 8（concat_context=True），不可修改
+            model_channels: 128             # UNet 基础通道数（决定修复能力）
+                                           # 调整建议：去噪任务 64-96（纹理保留为主）
+                                           #          去模糊任务 128-192（需要强重建能力）
+                                           #          严重退化 192-256（极限容量）
+            out_channels: 4                 # 输出通道数（latent 通道数，由 VAE 决定），不可修改
+            num_res_blocks: 3               # 每级残差块数量（影响细节恢复能力）
+                                           # 调整建议：去噪任务 2（保留原图细节）
+                                           #          去模糊任务 3-4（需要重建高频细节）
+            channel_mult: [1, 2, 4, 8]      # 各级别通道倍增系数（决定模型深度）
+                                           # 调整建议：[1,2,4](轻量3层) / [1,2,4,8](标准4层) / [1,2,4,8,16](深5层)
+            attention_resolutions: [8, 16]  # 启用 attention 的分辨率级别（捕捉长程依赖）
+                                           # 调整建议：去模糊任务 [8,16]（恢复结构一致性）
+                                           #          去噪任务 [16]（局部纹理为主，减少计算）
+                                           #          512px 图像可加 [8,16,32]
+            dropout: 0.0                    # Dropout 比例（正则化）
+                                           # 调整建议：0.0(无dropout) / 0.1(轻度) / 0.2(重度)；过拟合时增加
+            conv_resample: True             # 是否用卷积做上下采样（vs 最近邻/双线性）
+                                           # 调整建议：保持 True（更好的特征保留）
+            dim_head: 64                    # attention 每个头的维度
+                                           # 调整建议：32(快) / 64(标准) / 128(精细)；影响 attention 容量
+            num_heads: 4                    # attention 头数
+                                           # 调整建议：4(标准) / 8(重型)；与 dim_head 配合调整总容量
+            use_linear_attn: False          # 是否用线性 attention（修复任务建议关闭）
+                                           # 调整建议：去模糊任务保持 False（需要精确的全局建模）
+                                           #          去噪任务可用 True（局部操作为主，加速明显）
+            use_scale_shift_norm: True      # 残差块是否用 scale-shift normalization
+                                           # 调整建议：保持 True（更好的条件注入）
+            pool_factor: -1                 # 输入初始下采样倍数（-1=不下采样）
+                                           # 调整建议：保持 -1；仅在极大分辨率(>1024)时用 2 或 4
+    
+    # ======================== VAE 编码器配置 ========================
+    scale_factor: 0.18215                  # VAE latent 归一化因子（SD VAE 的固定值）
+                                           # 调整建议：使用 SD VAE 时固定为 0.18215，不可修改
     first_stage_cfg:
-      target: fmboost.kl_autoencoder.AutoencoderKL
+      target: fmboost.kl_autoencoder.AutoencoderKL  # VAE 自编码器类
       params:
-        ckpt_path: checkpoints/sd_ae.ckpt
-    # ------------------------ training parameters
-    lr: 3e-5
-    weight_decay: 0.0
-    # lr_scheduler_cfg: ...         # set LR scheduler if wanted
-    ema_rate: 0.999
-    ema_update_every: 1             # EMA update frequency
-    ema_update_after_step: 1000     # warmup steps without EMA
-    use_ema_for_sampling: true      # whether to use EMA model for sampling
-    # tracking metrics
+        ckpt_path: checkpoints/sd_ae.ckpt  # VAE 权重路径
+                                           # 调整建议：确保路径正确；可替换其他 VAE 但需同步修改 scale_factor
+    
+    # ======================== 优化器与学习率配置 ========================
+    lr: 3e-5                               # 基础学习率（修复任务关键超参）
+                                           # 调整建议：batch_size=4 用 3e-5 / batch_size=8 用 6e-5
+                                           #          去模糊任务：3e-5 - 5e-5（需要较大学习率重建细节）
+                                           #          去噪任务：1e-5 - 3e-5（保守学习率保留纹理）
+    weight_decay: 0.0                      # 权重衰减（修复任务一般不需要）
+                                           # 调整建议：修复任务保持 0.0；训练集小(<5k)时用 1e-4 防过拟合
+    
+    # ======================== EMA 配置 ========================
+    ema_rate: 0.999                        # EMA 衰减率（修复任务用标准值即可）
+                                           # 调整建议：去模糊任务 0.999（标准收敛速度）
+                                           #          去噪任务 0.9995（更平滑，避免纹理抖动）
+    ema_update_every: 1                    # EMA 更新频率（每 N 步更新一次）
+                                           # 调整建议：保持 1（每步更新）；显存不足时可改为 2 或 5
+    ema_update_after_step: 1000            # EMA 开始更新的步数（等待模型稳定）
+                                           # 调整建议：batch_size=4 用 1000 / batch_size=8 用 2000
+                                           #          修复任务建议标准值，过早启用会捕获不稳定的参数
+    use_ema_for_sampling: true             # 验证/推理时是否用 EMA 模型
+                                           # 调整建议：保持 true（EMA 更稳定）；调试时可改 false 看在线模型
+    
+    # ======================== 验证指标配置 ========================
     metric_tracker_cfg:
-      target: fmboost.metrics.ImageMetricTracker
+      target: fmboost.metrics.ImageMetricTracker  # 指标跟踪器类
       params:
-        num_crops: 4
-        crop_size: 256
-    # lr scheduler
+        num_crops: 4                       # 验证时多crop平均（评估修复稳定性）
+                                           # 调整建议：修复任务用 4（平衡速度与稳定性）
+                                           #          快速验证用 1；精确评估用 8
+        crop_size: 256                     # 裁剪块尺寸（必须与 image_size 一致）
+                                           # 调整建议：与 data.params.image_size 保持一致
+    
+    # ======================== 学习率调度器配置 ========================
     lr_scheduler_cfg:
-      target: fmboost.lr_schedulers.get_cosine_schedule_with_warmup
+      target: fmboost.lr_schedulers.get_cosine_schedule_with_warmup  # Cosine 衰减调度器
       params:
-        num_warmup_steps: 1000
-        num_training_steps: 100000
-    log_grad_norm: True
-    # compute train SSIM/PSNR every N steps (0 = every step)
-    train_metric_interval: 500
+        num_warmup_steps: 1000             # Warmup 步数（学习率线性增长阶段）
+                                           # 调整建议：batch_size=4 用 1000；batch_size=8 用 2000（线性缩放）
+                                           # 训练早期不稳定时增加
+        num_training_steps: 100000         # 总训练步数（必须与 trainer_params.max_steps 一致）
+                                           # 调整建议：与 train.trainer_params.max_steps 保持同步
+    
+    # ======================== 训练监控配置 ========================
+    log_grad_norm: True                    # 是否记录梯度范数（诊断修复训练稳定性）
+                                           # 调整建议：保持 True（修复任务容易出现梯度问题）
+    train_metric_interval: 500             # 训练时计算 PSNR/SSIM 的频率（监控修复质量）
+                                           # 调整建议：batch_size=4 用 500 / batch_size=8 用 1000
+                                           #          0 会每步都运行 40 步 ODE 采样，极慢，仅调试用
 
 
+# ======================== 数据集配置 ========================
 data:
-  name: PairedFolder256
-  target: fmboost.dataloader.PairedFolderDataModule
+  name: PairedFolder256                    # 数据集名称（仅用于日志）
+  target: fmboost.dataloader.PairedFolderDataModule  # 数据加载器类
   params:
-    root: ~/moxt/DiffUIR/Datasets/Restoration/Deblur
-    degraded_dir: input
-    clean_dir: target
-    batch_size: 4
-    val_batch_size: 4
-    test_batch_size: 4
-    image_size: 256
-    num_workers: 4
-    random_flip: true
+    root: ~/moxt/DiffUIR/Datasets/Restoration/Deblur  # 数据集根目录
+                                           # 调整建议：修改为你的数据集路径；支持 ~ 表示用户目录
+    degraded_dir: input                    # 退化图像子目录名
+                                           # 调整建议：默认 input；确保 root/train/input、root/val/input 存在
+    clean_dir: target                      # 干净图像子目录名
+                                           # 调整建议：默认 target；确保 root/train/target、root/val/target 存在
+    batch_size: 4                          # 训练批大小（修复任务核心参数）
+                                           # 调整建议：去模糊任务 4-8（需要多样性）
+                                           #          去噪任务 8-16（可用更大batch）
+                                           # 改动后需同步调整 lr、num_warmup_steps、train_metric_interval
+    val_batch_size: 4                      # 验证批大小
+                                           # 调整建议：与 batch_size 一致或稍小；显存不足时减半
+    test_batch_size: 4                     # 测试批大小
+                                           # 调整建议：与 val_batch_size 一致
+    image_size: 256                        # 训练图像尺寸（必须与退化图尺寸一致）
+                                           # 调整建议：去模糊任务 256-512（运动模糊需看清结构）
+                                           #          去噪任务 256（局部纹理，小尺寸即可）
+                                           # 必须是 8 的倍数；需与 model.params.low_res_size 一致
+    num_workers: 4                         # 数据加载并行进程数（防止IO瓶颈）
+                                           # 调整建议：batch_size=4 用 4 / batch_size=8 用 8
+                                           #          修复任务数据增强少，IO压力小，不需过多workers
+    random_flip: true                      # 训练时随机水平翻转（修复任务必要的数据增强）
+                                           # 调整建议：修复任务保持 true（增加模糊核/噪声模式的多样性）
+                                           #          仅在退化图与干净图严格像素对齐且数据量>10k时改false
 
 
-
-train:                                         # 训练控制项
+# ======================== 训练控制配置 ========================
+train:
+  # -------- Checkpoint 保存策略 --------
   checkpoint_callback_params:
-    every_n_train_steps: 10000                  # 每隔多少步保存一次
-    save_top_k: 2                              # 保存n个 checkpoint,选择保存多少个checkpoints，全部为-1
-    monitor: 'step'                             # 监控step数（保留最新的）
-    mode: 'max'                                 # 保留step最大（最新）的
-    verbose: True                               # 打印保存日志
-    save_last: True                             # 额外保存 last.ckpt
-    auto_insert_metric_name: False              # 不在文件名插入指标
+    every_n_train_steps: 10000             # 每隔 N 步保存一次 checkpoint
+                                           # 调整建议：10000(标准) / 5000(频繁,磁盘占用大) / 20000(省空间)
+    save_top_k: 2                          # 保留最新的 N 个 checkpoint
+                                           # 调整建议：2(省空间) / 5(保险) / -1(全部保留)
+    monitor: 'step'                        # 监控指标：step(步数) / val/psnr(验证PSNR) / val/loss(验证loss)
+                                           # 调整建议：step(保留最新) / val/psnr(保留最优)
+    mode: 'max'                            # 监控模式：max(越大越好) / min(越小越好)
+                                           # 调整建议：step/psnr 用 max；loss 用 min
+    verbose: True                          # 是否打印保存日志
+                                           # 调整建议：保持 True（便于监控）
+    save_last: True                        # 是否额外保存 last.ckpt（最新的 checkpoint）
+                                           # 调整建议：保持 True（方便断点续训）
+    auto_insert_metric_name: False         # 文件名是否插入监控指标值
+                                           # 调整建议：False(简洁) / True(便于对比不同指标的 ckpt)
+  
+  # -------- PyTorch Lightning Trainer 参数 --------
   trainer_params:
-    max_epochs: -1                            # 训练轮数（-1 表示不限步）
-    max_steps: 100000                         # 训练总步数（-1 表示不限轮）
-    num_sanity_val_steps: 0                     # 启动前验证步数
-    accumulate_grad_batches: 1                  # 梯度累计步数
-    log_every_n_steps: 500                      # 日志打印步频
-    limit_val_batches: 1                    # 验证集比例（1.0 全量，0 关闭）
-    val_check_interval: 500                     # 验证频率（步），需 ≤ 训练步数
-    precision: bf16-mixed                       # 混合精度设置
-    gradient_clip_val: 1.0                      # 梯度裁剪
+    max_epochs: -1                         # 最大训练轮数（-1 表示由 max_steps 控制）
+                                           # 调整建议：-1(用步数控制) / 100(用轮数控制)；两者二选一
+    max_steps: 100000                      # 最大训练步数（-1 表示由 max_epochs 控制）
+                                           # 调整建议：100000(标准) / 50000(快速实验) / 200000(精细训练)
+                                           # 修改后需同步修改 lr_scheduler_cfg.num_training_steps
+    num_sanity_val_steps: 0                # 训练前验证步数（用于检查数据加载）
+                                           # 调整建议：0(跳过,快速启动) / 2(检查数据管道)
+    accumulate_grad_batches: 1             # 梯度累积步数（模拟更大 batch）
+                                           # 调整建议：1(无累积) / 2(模拟2倍batch) / 4(显存不足时)
+                                           # 改为 N 时等效 batch_size × N，需同步调整 lr
+    log_every_n_steps: 500                 # 日志记录频率（步）
+                                           # 调整建议：500(标准) / 100(详细) / 1000(简洁)
+    limit_val_batches: 1                   # 验证集使用比例（监控修复效果）
+                                           # 调整建议：修复任务用 1（需要完整评估 PSNR/SSIM）
+                                           #          训练慢时用 0.5（牺牲少量评估精度换速度）
+                                           #          0 会完全跳过验证，不推荐（无法发现过拟合）
+    val_check_interval: 500                # 验证频率（监控修复质量提升）
+                                           # 调整建议：batch_size=4 用 500 / batch_size=8 用 1000
+                                           #          修复任务建议频繁验证（PSNR 可能突然跳变）
+                                           #          训练早期(前1万步)可用 200 密集监控
+    precision: bf16-mixed                  # 训练精度（修复任务用混合精度即可）
+                                           # 调整建议：A100/H100 用 bf16-mixed（2倍速度，精度无损）
+                                           #          V100/3090 用 fp16-mixed（可能略不稳定，观察loss）
+                                           #          修复任务对精度不敏感，混合精度无明显质量损失
+    gradient_clip_val: 1.0                 # 梯度裁剪阈值（防止梯度爆炸）
+                                           # 调整建议：1.0(标准) / 0.5(保守) / 2.0(宽松)；训练发散时减小
+  
+  # -------- 回调函数配置 --------
   callbacks:
-    - target: pytorch_lightning.callbacks.LearningRateMonitor
+    - target: pytorch_lightning.callbacks.LearningRateMonitor  # 学习率监控器
       params:
-        logging_interval: 'step'
+        logging_interval: 'step'           # 记录间隔：step(每步) / epoch(每轮)
+                                           # 调整建议：保持 step（便于观察 warmup 和衰减）
